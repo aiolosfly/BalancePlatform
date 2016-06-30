@@ -7,4 +7,5 @@
 ######4.示例2:绘制圆——输入圆心坐标和半径，通过圆的公式计算出一定数量的点，绘制这些点，形成圆(圆示例未调好)
 
 Servo_application/pic/pic1.jpg
-![图片1](Servo_application/pic/pic1.jpg) 
+![图片1](https://github.com/aiolosfly/Servo_application/blob/master/pic/pic1.jpg) 
+![图片1](https://github.com/aiolosfly/Servo_application/blob/master/pic/pic2.jpg) 
