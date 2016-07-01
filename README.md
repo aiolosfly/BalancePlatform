@@ -10,4 +10,5 @@
 #####！存在的问题：由于舵机精度问题，无法构成垂直坐标系，Y轴存在偏斜。绘制出来的圆为一个椭圆，方形为平行四边形。
 Servo_application/pic/pic1.jpg
 ![图片1](https://github.com/aiolosfly/Servo_application/blob/master/pic/pic1.jpg) 
-![图片1](https://github.com/aiolosfly/Servo_application/blob/master/pic/pic2.jpg) 
+![图片2](https://github.com/aiolosfly/Servo_application/blob/master/pic/pic2.jpg) 
+![图片3](https://github.com/aiolosfly/Servo_application/blob/master/pic/pic3.jpg) 
