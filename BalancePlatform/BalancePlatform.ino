@@ -1,17 +1,19 @@
 #include "MeMegaPi.h"
+#include <SoftwareSerial.h>
 #include <math.h>
+ 
+/******* system params *******/
+MeStepperOnBoard steppers[3] =
+{MeStepperOnBoard(1), MeStepperOnBoard(2), MeStepperOnBoard(3)};
 
-double rad = PI / 180.0;//degree->rad
-double deg = 180.0 / PI;//rad->degree
-//
-//int xLow = A6;
-//int yLow = A7;
-//int xHigh = A8;
-//int yHigh = A9;
-int xLow = A1;
-int yLow = A2;
-int xHigh = A3;
-int yHigh = A4;
+//MeJoystick joystick(PORT_6);
+
+Me4Button butP(PORT_8);
+Me4Button butI(PORT_7);
+Me4Button butD(PORT_6);
+
+MeSerial mySerial(PORT_5);
+  
 
 struct Point
 {
@@ -19,118 +21,145 @@ struct Point
   float y;
 };
 
-String buffer = "";
+Point targetP = {0,0};
+Point lastPoint;
 
-//电机的角度，固定
+const double rad = PI / 180.0;//degree->rad
+const double deg = 180.0 / PI;//rad->degree
 
-const int microStep = 16;//设置电机的细分量
-const long R = 12;//托盘的半径，cm
-Point points;
-const float tiltRatio = 10.0;
+const int microstep = 16;
+const float tiltRatio = 2;
+const long R = 13;//托盘的半径，cm
+const float motorDirAngle[3] = {0, 120, -120};
 
-float mDownVal1,mDownVal2,mDownVal3;
+//电机转动的角度**
+struct Angle{
+  float m[3];
+  int length;
+  
+};
+Angle motorMoveAngle;
+Angle lastAngle;
+
+ //电机连接处的角度
 
 long lastTime = 0;
-long runTime = 0;
-bool testMode = false;
+long runTime = 8000;
+bool testMode = true;
 int testAngle = 0;
-float testTilt = 0;
 
+String buffer = "";
 
-void parseBuffer();
-float getDownVal(float tiltAngle,float dirAngle,float motorAngle);
-float getMotorAngle(float downVal);
-void  moveToPos(int stepperNum,int pos);
-void ctrlPlatfAngle(float tiltAngle,float dirAngle);
-Point getPoint();
-void touch();
-void spin();
-void ctrlByJoystick();
+/******* TouchPad params*******/
+int xLow = A1;
+int yLow = A2;
+int xHigh = A3;
+int yHigh = A4;
 
+/******* PID params *******/
+//PID系数
+float Kp = 0.84;
+float Ki = 0.03;
+float Kd = 0.46;
 
-MeStepperOnBoard steppers[3] = 
-{MeStepperOnBoard(1),MeStepperOnBoard(2),MeStepperOnBoard(3)}; 
+double pItem = 0;
+double iItem = 0;
+double dItem = 0;
 
-MeJoystick joystick(PORT_6);
+Point currentPos;
 
+/******* testPID *******/
+uint8_t keyPreP = KEY_NULL;
+uint8_t keyPrePrevP = KEY_NULL;
 
-const float motorAngle[3]={0,120,-120};
+uint8_t keyPreI = KEY_NULL;
+uint8_t keyPrePrevI = KEY_NULL;
 
-void setup(){
-  Serial.begin(115200);
- // delay(100);
+uint8_t keyPreD = KEY_NULL;
+uint8_t keyPrePrevD = KEY_NULL;
 
- //电机初始设置
-   for(int i=0;i<3;i++){
-    steppers[i].setMaxSpeed(10000);
-    steppers[i].setAcceleration(20000);
-    steppers[i].setMicroStep(microStep);
-    steppers[i].enableOutputs();
-    steppers[i].moveTo(-400);
-  }
+//用按键开关调试PID参数,"-""+"
+void testPidParams()
+{
 
-  Serial.println("*show all orders:  /order/      ");
-  Serial.println("*top:              /top/");
-  Serial.println("*bottom:           /bottom/");
-  Serial.println("*touch:            /touch/");
-  Serial.println("*testMode(true):   /mode/t/");
-  Serial.println("*testMode(false):  /mode/f/");
-  Serial.println("*getDownVal:       /d/tiltAngle/dirAngle/");
-  Serial.println("*getMotorAngle:    /a/downVal/");
-  Serial.println("*moveToPos:        /s/stepperNum/angle/");  
-  Serial.println("*PlatfAngle_3:     /t/tiltAngle/dirAngle/");
-  Serial.println("============================================");  
-  
-//  mDownVal1 = downVal(30,90,30);
-//  mDownVal2 = downVal(30,90,150);
-//  mDownVal3 = downVal(30,90,-90);
-//
-//  Serial.println("*********************");
-//  
-//  Serial.print("mDownVal1: ");
-//  Serial.println(mDownVal1);
-//  
-//  Serial.print("mDownVal2: ");
-//  Serial.println(mDownVal2);
-//
-//  Serial.print("mDownVal3: ");
-//  Serial.println(mDownVal3);
- 
-}
+  keyPrePrevP = keyPreP;
+  keyPreP = butP.pressed();
 
-void loop(){
+  keyPrePrevI = keyPreI;
+  keyPreI = butI.pressed();
 
-  //隔一段时间采集一次坐标
-   if(micros()-lastTime>runTime){
-     points = getPoint();
-      lastTime = micros();
-      runTime = 15000;
-      if(testMode==true){
+  keyPrePrevD = keyPreD;
+  keyPreD = butD.pressed();
 
-     // spin();
-      touch();
-     // ctrlByJoystick();
-
+if (keyPrePrevP != keyPreP)
+{
+  switch (keyPreP)
+  {
+    case KEY_1:
+      {
+        Kp+= 0.02;
+//        Serial.print("yKp");
+//        Serial.println(yKp);
+        break;
       }
-   }
 
+    case KEY_3:
+      {
+        Kp-=0.02;
+//        Serial.print("yKp");
+//        Serial.println(yKp);        
+        break;
+      }
 
-
-  //getPoint();
-    //touch(); 
-   
-  if (Serial.available()) {
-    char c = Serial.read();
-    if (c == '\n') {
-      parseBuffer();
-    } else {
-      buffer += c;
-    }
-  } 
-    for(int i=0;i<3;i++){
-    steppers[i].run();
-   } 
+  }
 }
+ if (keyPrePrevI != keyPreI)
+{
+  switch (keyPreI)
+  {
+    case KEY_1:
+      {
+        Ki+=0.02;
+//        Serial.print("yKi");
+//        Serial.println(yKi);       
+        break;
+      }
+
+
+      
+    case KEY_3:
+      {
+        Ki-=0.02;
+//        Serial.print("yKi");
+//        Serial.println(yKi);        
+        break;
+      }
+
+  }
+}
+if (keyPrePrevD != keyPreD)
+{
+  switch (keyPreD)
+  {
+    case KEY_1:
+      {
+        Kd+=0.02;
+//        Serial.print("yKd");
+//        Serial.println(yKd);
+        break;
+      }
+
+    case KEY_3:
+      {
+        Kd-=0.02;
+        break;
+      }
+
+  }
+ }
+}
+
+/******* function *******/
 
 void parseBuffer() {
   buffer = buffer + "/";
@@ -152,271 +181,302 @@ void parseBuffer() {
     if (endIndex == len - 1) break;
   }
 
-  if (values[0].equals("order")){
+  if (values[0].equals("order")) {
 
-  Serial.println("*order:          show all orders");
-  Serial.println("*top:           /top/");
-  Serial.println("*bottom:        /bottom/");  
-  Serial.println("*touch:          /touch/");
-  Serial.println("*getDownVal:    /d/tiltAngle/dirAngle/");
-  Serial.println("*getMotorAngle: /a/downVal/");
-  Serial.println("*moveToPos:     /s/stepperNum/angle/");  
-  Serial.println("*PlatfAngle_3:  /t/tiltAngle/dirAngle/");
-  Serial.println("============================================");
+    Serial.println("*show all orders:  /order/");
+    Serial.println("*top:              /top/");
+    Serial.println("*bottom:           /bottom/");
+    Serial.println("*testMode(true):   /mode/t/");
+    Serial.println("*testMode(false):  /mode/f/");
 
-   
-  }
- 
-  //测试下降量
-  else if (values[0].equals("d")) {
-    getDownVal(values[1].toFloat(), values[2].toFloat(),motorAngle[0]);
-    getDownVal(values[1].toFloat(), values[2].toFloat(),motorAngle[1]);
-    getDownVal(values[1].toFloat(), values[2].toFloat(),motorAngle[2]);
-  }
-  
-  //测试电机角度
-  else if (values[0].equals("a")){
-    getMotorAngle(values[1].toFloat());   
-  }
-
-  //测试电机转动到指定位置
-  else if (values[0].equals("s")){
-    moveToPos(values[1].toInt(),values[2].toFloat());   
+    Serial.println("============================================");
 
   }
 
 
-
-  //测试三个电机
-  else if (values[0].equals("t")){
-     
-      ctrlPlatfAngle(values[1].toInt(),values[2].toInt());
-      
-  }
-
-  else if (values[0].equals("top")){
-     for(int i = 0;i<3;i++)
-    {      
+  //上升到预设高度
+  else if (values[0].equals("top")) {
+    for (int i = 0; i < 3; i++)
+    {
       steppers[i].moveTo(-400);
-      }  
+    }
   }
-
-  else if (values[0].equals("bottom")){
-     for(int i = 0;i<3;i++)
-    {      
+  //下降到起点
+  else if (values[0].equals("bottom")) {
+    for (int i = 0; i < 3; i++)
+    {
       steppers[i].moveTo(0);
-      }
-    
+    }
+
   }
 
+  //调试模式
+  else if (values[0].equals("mode")) {
 
- 
-
-  else if (values[0].equals("touch")){
-    Serial.println("touch()");
-    touch();
-  }
-
-    else if(values[0].equals("mode")){
-
-    if(values[1].equals("t"))
-    testMode = true;
+    if (values[1].equals("t"))
+      testMode = true;
     else if (values[1].equals("f"))
-    testMode = false;
+      testMode = false;
   }
-  
+
+  else if (values[0].equals("pid")) {
+
+    Serial.print("PID:");
+    Serial.print(Kp);
+    Serial.print(":");
+    Serial.print(Ki);
+    Serial.print(":");    
+    Serial.println(Kd);
+
+  }
+
   Serial.println(buffer);
   buffer = "";
 }
 
-void ctrlPlatfAngle(float tiltAngle,float dirAngle )
-{
-  for(int stepperNum = 0;stepperNum<3;stepperNum++){
-  float downVal = getDownVal(tiltAngle, dirAngle, motorAngle[stepperNum]);
-  float angle = getMotorAngle(downVal);
-
-  moveToPos(stepperNum,angle); 
-
-  }
- }
-
-//输入下降量，返回电机应到的角度
-float getMotorAngle(float downVal)
-{
-  float angle;
-  angle = atan(1-(downVal+sqrt(50))/sqrt(50))*deg;//
-
- //angle = (downVal!=0)?atan(1-(downVal)/sqrt(50))*deg:0;
-  //angle = atan(-sqrt(sqrt(2)-1))*deg;
-//  Serial.print(" ** motorAngle: ");
-//  Serial.println(angle+45);
-
-  return (angle+45);
-    
-  }
 
 
-//输入角度，获取变化量
-float getDownVal(float tiltAngle,float dirAngle,float motorAngle)
-{
-  float downVal=0;
-  float diffAngle = abs(motorAngle-dirAngle);
+void ctrlPlatfAngle(Point point){
   
-  if (diffAngle<=90)
-    downVal = R*(1+cos(diffAngle*rad))*sin(tiltAngle*rad);
-  else if(diffAngle>90)
-    downVal = R*(1-cos(PI-diffAngle*rad))*sin(tiltAngle*rad);
-  else
-    Serial.println("Wrong");
-//
-//  Serial.println("************");
-//  Serial.print(" ** diffAngle: ");
-//  Serial.println(diffAngle);
-//  Serial.print(" ** downVal: ");
-//  Serial.println(downVal);
+  int len = 1;
 
-   return downVal;
- }
-
- //移动到对应角度
-void  moveToPos(int stepperNum,float angle)
+    float tx = targetP.x+(point.x-targetP.x);
+    float ty = targetP.y+(point.y-targetP.y); 
+    pushPoint(pointToAngles(tx,ty));
+        
+}
+Angle pointToAngles(float tx,float ty)
 {
-    int pos;
-    pos = -floor(microStep*angle/1.8);//这里的负号是根据电机转向添加的
-//    Serial.print("microStep: ");
-//    Serial.println(microStep);
-//    Serial.print("angle: ");
-//    Serial.println(angle);
-//    Serial.println(microStep*angle/1.8);
-//    Serial.print("pos:");
-//    Serial.println(pos);
-   // steppers[stepperNum].moveTo(pos); 
-    steppers[stepperNum].moveTo(pos);//(stepperNum,pos);
- }
+    float tiltAngle;
+    float dirAngle;
+  
+    float px = tx;
+    float py = ty;
+    float ppowL = px * px + py * py;
+    double pL= sqrt(ppowL);
+    pItem = pL;
+
+    iItem = (pL>2)?0:(pL<0.5)?0:(iItem+ppowL);
+//    iItem = (pL>2&&iItem>2)?0:(iItem+ppowL);
 
 
+    float dx = tx-lastPoint.x;
+    float dy = ty-lastPoint.y;
+    float dpowL = dx * dx + dy * dy;
+    double dL = sqrt(dpowL);
+    dItem = dL;
+//
+//    Serial.println("tx");
+//    Serial.print(tx);
+//    Serial.print(":");
+//    Serial.println(ty);
+//
+//    Serial.println("lastPoint");
+//    Serial.print(lastPoint.x);
+//    Serial.print(":");
+//    Serial.println(lastPoint.y);    
+//
+//    Serial.println("dx");
+//    Serial.print(dx);
+//    Serial.print(":");
+//    Serial.print(dy);
+//    Serial.print(":");
+//    Serial.println(atan2(dy, dx) * deg + 180);
+
+//    Serial.println("pid item");
+//    Serial.print(pItem);
+//    Serial.print(":");
+//    Serial.print(iItem);
+//    Serial.print(":");
+//    Serial.println(dItem);
+    
+   
+      dirAngle = (pL>1)?(atan2(dy, dx) * deg + 180):(atan2(py, px) * deg + 180);//方向角，速度的方向  
+      tiltAngle = (pL>1)?(Kp*pItem+Kd*dItem):(Kp*pItem+Ki*iItem);//倾斜角
+//      tiltAngle = (pL>1)?(Kp*pItem+Kd*dItem):0.5;//倾斜角
+
+//      dirAngle = (atan2(dy, dx) * deg + 180);
+//      tiltAngle =(Kp*pItem+Kd*dItem);
+//
+//       if((int)pL>0)
+//      Serial.println(pL);
+      
+//    Serial.print("dirAngle:");
+//    Serial.println(dirAngle);
+//
+//    Serial.print("tiltAngle:");
+//    Serial.println(tiltAngle);
+//
+//    Serial.print("pL:");
+//    Serial.println(pL);
+//
+//    Serial.print("dL:");
+//    Serial.println(dL);
+  
+  //获取变化量,并算出电机应转角度
+  float downVal;
+  float sinA = sin(tiltAngle * rad);
+  for(int i = 0;i<3;i++){
+    
+    float diffAngle = fabs(motorDirAngle[i] - dirAngle);   
+    float cosA = cos(diffAngle * rad);
+
+    downVal = R * cosA * sinA;
+  
+  motorMoveAngle.m[i] = atan(-downVal*0.1414 ) * deg+45;/// 0.1414=1/sqrt(50)
+  }
+  
+  return motorMoveAngle;
+    
+}
+
+
+void pushPoint(Angle p)
+{
+  if(lastAngle.m[0]!=p.m[0]||lastAngle.m[1]!=p.m[1]||lastAngle.m[2]!=p.m[2]){ 
+    moveToPos(p);
+  }
+  
+  lastAngle = p;
+    
+}
+
+void moveToPos(Angle a){
+  
+   int pos;
+  for(int i = 0;i<3;i++){  
+    pos = -floor(microstep * a.m[i] *0.556); //这里的负号是根据电机转向添加的//0.556=1/1.8
+    steppers[i].moveTo(pos);
+  
+  }
+    
+}
+
+//触摸板点的获取
 Point getPoint()
 {
   Point point;
-  pinMode(xLow,OUTPUT);
-  pinMode(xHigh,OUTPUT);
-  digitalWrite(xLow,LOW);
-  digitalWrite(xHigh,HIGH);
-
-  digitalWrite(yLow,LOW);
-  digitalWrite(yHigh,LOW);
-
-  pinMode(yLow,INPUT);
-  pinMode(yHigh,INPUT);
-  //delay(10);
-
-  float x = analogRead(yLow)-510;//平移到中心
-  point.x=(x>-455&&x<455)?17.5*x/455:0;//过滤掉无效值,且与现实长度对应
+  pinMode(xLow, OUTPUT);
+  pinMode(xHigh, OUTPUT);
   
+  digitalWrite(xLow, LOW);
+  digitalWrite(xHigh, HIGH);
 
-  pinMode(yLow,OUTPUT);
-  pinMode(yHigh,OUTPUT);
-  digitalWrite(yLow,LOW);
-  digitalWrite(yHigh,HIGH);
+  digitalWrite(yLow, LOW);
+  digitalWrite(yHigh, LOW);
 
-  digitalWrite(xLow,LOW);
-  digitalWrite(xHigh,LOW);
+  pinMode(yLow, INPUT);
+  pinMode(yHigh, INPUT);
 
-  pinMode(xLow,INPUT);
-  pinMode(xHigh,INPUT);
+  float x = (analogRead(yLow) > 10) ? analogRead(yLow) : 511.5024;
+  //  float x = analogRead(yLow);
+
+  pinMode(yLow, OUTPUT);
+  pinMode(yHigh, OUTPUT);
+  
+  digitalWrite(yLow, LOW);
+  digitalWrite(yHigh, HIGH);
+
+  digitalWrite(xLow, LOW);
+  digitalWrite(xHigh, LOW);
+
+  pinMode(xLow, INPUT);
+  pinMode(xHigh, INPUT);
   //delay(10);
 
-  float y=analogRead(xLow)-500;//平移到中心
-  point.y=(y>-365&&y<365)?10*y/365:0;//过滤无效值,且与现实长度对应
-////
-//  Serial.println("==============point============");
-//  Serial.print(point.x);  
-//  Serial.print(":");  
-//  Serial.println(point.y);
-//  delay(300);  
+  float y = (analogRead(xLow) > 30) ? analogRead(xLow) : 496.02189;//过滤
+//     float y=analogRead(xLow);
+
+//    Serial.print(x);
+//    Serial.print(":");
+//    Serial.println(y);
+
+
+  point.x = 0.0201 * x - 10.2812; //x= A1*X+C1;
+  point.y = 0.0137 * y - 6.7955; //y = A2*Y+C2;
+
+//      Serial.println("==========point=========");
+//      Serial.print(point.x);
+//      Serial.print(":");
+//      Serial.println(point.y);
 
   return point;
-  
+
 }
 
-//通过遥感模块控制
-void ctrlByJoystick()
+
+void spin(float tiltAngle)
 {
-  Point point= {0,0};
-  float tiltAngle;
-  float dirAngle; 
-  float x = joystick.readX()+3;
-  point.x=(x>-2&&x<2)?0:x;//过滤掉无效值
-  
-  float y = joystick.readY();//根据实际的遥感模块偏移
-  point.y=(x>-3&&x<3)?0:y;//过滤掉无效值
-//  Serial.println("=========Joystick==========");
-//  Serial.print("x::");
-//  Serial.println(point.x);
-
-//  Serial.print("y::");
-//  Serial.println(point.y);
-
-  dirAngle = atan2(point.y,point.x)*deg;
-
-//  Serial.print("dirAngle::");
-//  Serial.println(dirAngle);
-
-  long dx = abs(point.x);
-  long dy = abs(point.y);
-  long powL = dx*dx+dy*dy;
-  double L = sqrt(powL);
-  tiltAngle = tiltRatio*L/490;//根据实际的遥感修改，490
-//  Serial.print("L::");
-//  Serial.println(L);
-//  Serial.print("tiltAngle::");
-//  Serial.println(tiltAngle);  
-
-  ctrlPlatfAngle(tiltAngle,dirAngle );
-
-  
-  
-  
-  
-  }
-
-void touch()
-{
-  
-  float tiltAngle;
-  float dirAngle; 
-  dirAngle = atan2(points.y,points.x)*deg+180;
-//  Serial.println("=========touch==========");
-//  Serial.print("dirAngle::");
-//  Serial.println(dirAngle);
-
-  long dx = abs(points.x);
-  long dy = abs(points.y);
-  long powL = dx*dx+dy*dy;
-  
-  double L = sqrt(powL);
-  tiltAngle = tiltRatio*L/R;
-//  Serial.print("tiltAngle::");
-//  Serial.println(tiltAngle);  
-
-     
-      ctrlPlatfAngle(tiltAngle,dirAngle );
-      
-
+   float downVal;
+   float sinA = sin(tiltAngle * rad);
+   testAngle+=2;
+    for(int i = 0;i<3;i++){
     
+    float diffAngle = fabs(motorDirAngle[i] - testAngle);   
+    float cosA = cos(diffAngle * rad);
+
+    downVal = R * cosA * sinA; 
+  motorMoveAngle.m[i] = atan(-downVal*0.1414 ) * deg+45;/// 0.1414=1/sqrt(50)
+  }
+  pushPoint(motorMoveAngle);
+  if (testAngle == 180)
+    testAngle = -testAngle;//从-180到0度
+}
+void setup() {
+
+
+  Serial.begin(115200);
+  //电机初始设置
+  for (int i = 0; i < 3; i++) {
+    steppers[i].setMaxSpeed(1000);
+    steppers[i].setAcceleration(6000);
+    steppers[i].setMicroStep(microstep);
+    steppers[i].enableOutputs();
+   // steppers[i].setSpeed(200);   
+    steppers[i].moveTo(-400);
+
+  }
+  delay(100);
+
 }
 
-void spin()
-{
-        testAngle++;
-        testTilt=20;
-        
-        if(testAngle==180)
-          testAngle = -testAngle;//从-180到0度
-          
-        ctrlPlatfAngle(testTilt,testAngle);
-  
+void loop() { 
+
+//  隔一段时间采集一次坐标
+  if (micros() - lastTime > runTime) {  
+      testPidParams();   
+    currentPos = getPoint();
+     // spin(20);
+    ctrlPlatfAngle(currentPos);
+    lastPoint = currentPos;
+
+    lastTime = micros();
+
   }
+//    testPidParams(); 
+//    currentPos = getPoint();
+
+
+
+
+    for (int i = 0; i < 3; i++) {
+    steppers[i].run();
+  }    
+
+
+  if (Serial.available()) {
+    char c = Serial.read();
+    if (c == '\n') {
+      parseBuffer();
+    } else {
+      buffer += c;
+    }
+  }
+
+  
+}
+
+
 
 
 
